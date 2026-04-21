@@ -1,0 +1,3 @@
+Apple | Алим
+Banana | Банан
+Computer | Компьютер

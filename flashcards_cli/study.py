@@ -1,83 +1,124 @@
+"""
+Суралцах тойрог (Study Loop).
+
+Картуудыг эрэмбэлэгчийн дагуу дараалуулж, хэрэглэгчээс хариултыг авч,
+зөв/буруу эсэхийг шалгаж, статистик болон амжилтуудыг хянана.
+"""
+import time
 import click
-from PyInquirer import prompt
-from sqlalchemy.orm import Session
 
-from flashcards_core.errors import NoCardsToStudyException
-from flashcards_core.schedulers import get_scheduler_for_deck
-from flashcards_core.database import Deck
+from .organizers import get_organizer
+from .achievements import AchievementTracker
 
 
-def study(session: Session):
+def study(deck, order="random", repetitions=1, invertcards=False):
+    """
+    Суралцах горимыг эхлүүлнэ.
 
-    decks = Deck.get_all(session=session)
-    if not decks:
-        click.echo('You have no decks! Use "Edit my collection" to create one.')
+    Args:
+        deck: Deck объект (картуудын цуглуулга)
+        order: Эрэмбэлэлтийн горим ("random", "worst-first", "recent-mistakes-first")
+        repetitions: Нэг картыг хэдэн удаа зөв хариулахыг шаардах
+        invertcards: True бол асуулт, хариултыг сольж харуулна
+    """
+    if not deck.cards:
+        click.echo("Картууд олдсонгүй!")
         return
 
-    answers = prompt(
-        [
-            {
-                "type": "list",
-                "name": "deck",
-                "message": "Enter the deck you want to study:",
-                "choices": [deck.name for deck in decks] + ["< Back"],
-            }
-        ]
-    )
+    organizer = get_organizer(order)
+    tracker = AchievementTracker()
 
-    # Happens in case of Ctrl+C
-    if not answers.get("deck") or answers["deck"] == "< Back":
-        return
+    click.echo("\n" + "=" * 40)
+    click.echo("  📚 Суралцах горим эхэллээ!")
+    click.echo(f"  Нийт карт: {len(deck.cards)}")
+    click.echo(f"  Горим: {order}")
+    click.echo(f"  Шаардлагатай зөв хариулт: {repetitions}")
+    if invertcards:
+        click.echo("  ↔ Асуулт/хариулт солигдсон")
+    click.echo("=" * 40)
+    click.echo("  (Гарахын тулд хоосон хариулт оруулна уу)\n")
 
-    deck = Deck.get_by_name(session=session, name=answers["deck"])
-    scheduler = get_scheduler_for_deck(session=session, deck=deck)
+    round_number = 0
 
-    try:
-        card = scheduler.next_card()
-    except NoCardsToStudyException:
-        click.echo(
-            "No cards to study here! Use 'Edit My Collection' "
-            "to add cards or to modify the deck settings."
-        )
-        return
-
-    reviewed_cards = 0
     while True:
+        # Тойрог бүрийн эхэнд картуудыг шинээр эрэмбэлнэ
+        round_number += 1
 
-        # Ask for the answer
-        click.echo(f"\n Card #{reviewed_cards} -------------------")
-        answer = prompt(
-            [
-                {
-                    "type": "input",
-                    "name": "answer",
-                    "message": f"{card.question.value} -> ",
-                }
-            ]
-        )
+        # Энэ тойрогт суралцах картуудыг шүүнэ:
+        # repetitions-ээс бага зөв хариулттай картууд л үлдэнэ
+        remaining = [c for c in deck.cards if c.success_count < repetitions]
 
-        # No answer means to leave
-        if not answer.get("answer"):
-            click.echo("\n----------")
-            click.echo(" See you soon!")
-            click.echo("----------\n")
-            return
+        if not remaining:
+            click.echo("\n🎉 Бүх картуудыг амжилттай дуусгалаа!")
+            break
 
-        # Check for correctness and give some feedback
-        if answer["answer"] == card.answer.value:
-            scheduler.process_test_result(card, True)
-            click.echo(" ** Correct! **")
-        else:
-            scheduler.process_test_result(card, False)
-            click.echo(f" __ Wrong! The answer was {card.answer.value} __")
+        ordered_cards = organizer.reorganize(remaining)
 
-        # Pick the next card and loop
-        reviewed_cards += 1
-        try:
-            card = scheduler.next_card()
-        except NoCardsToStudyException:
-            click.echo(
-                "No cards to study! Use 'Edit My Collection' "
-                "to add cards or to modify the deck settings."
-            )
-            return
+        click.echo(f"\n--- Тойрог #{round_number} ({len(ordered_cards)} карт үлдсэн) ---")
+
+        for i, card in enumerate(ordered_cards, 1):
+            # invertcards: асуулт/хариултыг солих
+            if invertcards:
+                display_question = card.answer
+                correct_answer = card.question
+            else:
+                display_question = card.question
+                correct_answer = card.answer
+
+            click.echo(f"\n  Карт [{i}/{len(ordered_cards)}]")
+            start_time = time.time()
+            user_answer = click.prompt(f"  {display_question}", default="", show_default=False)
+            elapsed = time.time() - start_time
+
+            # Хоосон хариулт = гарах
+            if not user_answer.strip():
+                click.echo("\n  👋 Баяртай! Дараа уулзъя!")
+                _show_stats(deck, tracker)
+                return
+
+            card.total_tries += 1
+
+            if user_answer.strip().lower() == correct_answer.lower():
+                card.success_count += 1
+                card.last_result = True
+                tracker.record(card, True, elapsed)
+                click.echo(f"  ✅ Зөв! ({elapsed:.1f}с)")
+            else:
+                card.fail_count += 1
+                card.last_result = False
+                tracker.record(card, False, elapsed)
+                click.echo(f"  ❌ Буруу! Зөв хариулт: {correct_answer} ({elapsed:.1f}с)")
+
+        # Тойрог дууссаны дараа амжилтуудыг шалгана
+        new_achievements = tracker.check_achievements(deck.cards)
+        if new_achievements:
+            click.echo("\n  🏆 Шинэ амжилт(ууд):")
+            for a in new_achievements:
+                click.echo(f"    {a}")
+
+    # Бүх карт дуусвал
+    _show_stats(deck, tracker)
+
+
+def _show_stats(deck, tracker):
+    """Суралцсаны дараах статистик харуулна."""
+    click.echo("\n" + "=" * 40)
+    click.echo("  📊 Статистик")
+    click.echo("=" * 40)
+
+    total_tries = sum(c.total_tries for c in deck.cards)
+    total_correct = sum(c.success_count for c in deck.cards)
+    total_wrong = sum(c.fail_count for c in deck.cards)
+
+    click.echo(f"  Нийт оролдлого: {total_tries}")
+    click.echo(f"  Зөв: {total_correct}")
+    click.echo(f"  Буруу: {total_wrong}")
+
+    if total_tries > 0:
+        accuracy = (total_correct / total_tries) * 100
+        click.echo(f"  Нарийвчлал: {accuracy:.1f}%")
+
+    if tracker.earned:
+        click.echo(f"\n  🏆 Авсан амжилтууд: {', '.join(tracker.earned)}")
+
+    click.echo("=" * 40 + "\n")
