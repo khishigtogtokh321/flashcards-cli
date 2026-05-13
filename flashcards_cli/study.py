@@ -29,7 +29,7 @@ def study(deck, order="random", repetitions=1, invertcards=False):
     tracker = AchievementTracker()
 
     click.echo("\n" + "=" * 40)
-    click.echo("  📚 Суралцах горим эхэллээ!")
+    click.echo("   Суралцах горим эхэллээ!")
     click.echo(f"  Нийт карт: {len(deck.cards)}")
     click.echo(f"  Горим: {order}")
     click.echo(f"  Шаардлагатай зөв хариулт: {repetitions}")
@@ -49,9 +49,10 @@ def study(deck, order="random", repetitions=1, invertcards=False):
         remaining = [c for c in deck.cards if c.success_count < repetitions]
 
         if not remaining:
-            click.echo("\n🎉 Бүх картуудыг амжилттай дуусгалаа!")
+            click.echo("\n Бүх картуудыг амжилттай дуусгалаа!")
             break
 
+        tracker.start_round()
         ordered_cards = organizer.reorganize(remaining)
 
         click.echo(f"\n--- Тойрог #{round_number} ({len(ordered_cards)} карт үлдсэн) ---")
@@ -72,7 +73,7 @@ def study(deck, order="random", repetitions=1, invertcards=False):
 
             # Хоосон хариулт = гарах
             if not user_answer.strip():
-                click.echo("\n  👋 Баяртай! Дараа уулзъя!")
+                click.echo("\n  Баяртай! Дараа уулзъя!")
                 _show_stats(deck, tracker)
                 return
 

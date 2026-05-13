@@ -16,6 +16,10 @@ class AchievementTracker:
         self.round_results = []      # Тойрог дахь (card, is_correct, time) бүртгэлүүд
         self.earned = []             # Авсан амжилтуудын жагсаалт
 
+    def start_round(self):
+        """Reset per-round answer records before a new round starts."""
+        self.round_results = []
+
     def record(self, card, is_correct, elapsed_time):
         """Нэг хариултын үр дүнг бүртгэх."""
         self.round_results.append({
